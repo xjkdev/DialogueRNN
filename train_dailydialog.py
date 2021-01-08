@@ -6,7 +6,9 @@ import numpy as np, pickle, time, argparse
 from model import DailyDialogueModel, MaskedNLLLoss
 from dataloader import DailyDialoguePadCollate, DailyDialogueDataset
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score, classification_report, precision_recall_fscore_support
-
+import datetime as dt
+import os
+import gc
 
 def get_DailyDialogue_loaders(path, batch_size=32, num_workers=0, pin_memory=False):
     
@@ -49,6 +51,11 @@ def process_data_loader(data):
 
 
 def train_or_eval_model(model, loss_function, dataloader, epoch, optimizer=None, train=False):
+    if train:
+        print('train')
+    else:
+        print('eval')
+    # breakpoint()
     losses = []
     preds = []
     labels = []
@@ -84,10 +91,11 @@ def train_or_eval_model(model, loss_function, dataloader, epoch, optimizer=None,
                     writer.add_histogram(param[0], param[1].grad, epoch)
             optimizer.step()
         else:
-            alphas += alpha
-            alphas_f += alpha_f
-            alphas_b += alpha_b
-            vids += data[-1]
+            pass
+            # alphas += alpha
+            # alphas_f += alpha_f
+            # alphas_b += alpha_b
+            # vids += data[-1].cpu()
 
     if preds!=[]:
         preds  = np.concatenate(preds)
@@ -130,9 +138,15 @@ if __name__ == '__main__':
                         help='feature size from cnn layer')
     parser.add_argument('--cnn_dropout', type=float, default=0.5, metavar='cnn_dropout',
                         help='cnn dropout rate')
+    parser.add_argument('--save_path', type=str, default='./saved/dailydialog_{}'.format(
+            dt.datetime.now().strftime("%m_%d_%H_%M")),
+            metavar='save_path', help='model save path')
+    parser.add_argument('--pretrained', type=str, default='', metavar='pretrained',
+                                    help='model pretrained')
     args = parser.parse_args()
 
     print(args)
+    print('cuda', os.environ['CUDA_VISIBLE_DEVICES'])
     
     args.cuda = torch.cuda.is_available()
     if args.cuda:
@@ -143,6 +157,10 @@ if __name__ == '__main__':
     if args.tensorboard:
         from tensorboardX import SummaryWriter
         writer = SummaryWriter()
+
+    save_path = args.save_path
+    os.makedirs(save_path)
+    print('will save to', save_path)
 
     batch_size = args.batch_size
     n_classes  = 7
@@ -172,8 +190,12 @@ if __name__ == '__main__':
                                dropout_rec=args.rec_dropout,
                                dropout=args.dropout)
     model.init_pretrained_embeddings(glv_pretrained)    
+    if args.pretrained != '':
+        state_dict = torch.load(args.pretrained)
+        model.load_state_dict(state_dict)
     if cuda:
         model.cuda()
+
         
         
     loss_weights = torch.FloatTensor([1.2959,0.7958,0.8276,1.4088,0.9560,1.0575,0.6585])
@@ -198,14 +220,17 @@ if __name__ == '__main__':
                                                train_loader, e, optimizer, True)
         valid_loss, valid_acc, _,_,_,val_fscore,_= train_or_eval_model(model, loss_function, valid_loader, e)
         test_loss, test_acc, test_label, test_pred, test_mask, test_fscore, attentions = train_or_eval_model(model, loss_function, test_loader, e)
+        torch.save(model.state_dict(), os.path.join(save_path, 'checkpoint.pkl'))
 
         if best_loss == None or best_loss > test_loss:
             best_loss, best_label, best_pred, best_mask, best_attn =                    test_loss, test_label, test_pred, test_mask, attentions
-
+            torch.save(model.state_dict(), os.path.join(save_path, 'model_best.pkl'))
+            print('saved model best')
         if args.tensorboard:
             writer.add_scalar('test: accuracy/loss',test_acc/test_loss,e)
             writer.add_scalar('train: accuracy/loss',train_acc/train_loss,e)
         print('epoch {} train_loss {} train_acc {} train_fscore {} valid_loss {} valid_acc {} valid_fscore {} test_loss {} test_acc {} test_fscore {} time {}s'.format(e+1, train_loss, train_acc, train_fscore, valid_loss, valid_acc, val_fscore, test_loss, test_acc, test_fscore, round(time.time()-start_time,2)))
+        gc.collect()
     if args.tensorboard:
         writer.close()
 
