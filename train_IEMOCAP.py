@@ -1,5 +1,4 @@
 import numpy as np
-np.random.seed(1234)
 
 import torch
 import torch.nn as nn
@@ -9,7 +8,9 @@ import torch.optim as optim
 
 import argparse
 import time
+import os
 import pickle
+import datetime as dt
 
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score,\
                         classification_report, precision_recall_fscore_support
@@ -84,10 +85,11 @@ def train_or_eval_model(model, loss_function, dataloader, epoch, optimizer=None,
                     writer.add_histogram(param[0], param[1].grad, epoch)
             optimizer.step()
         else:
-            alphas += alpha
-            alphas_f += alpha_f
-            alphas_b += alpha_b
-            vids += data[-1]
+            pass
+            # alphas += alpha
+            # alphas_f += alpha_f
+            # alphas_b += alpha_b
+            # vids += data[-1]
 
     if preds!=[]:
         preds  = np.concatenate(preds)
@@ -125,6 +127,11 @@ if __name__ == '__main__':
     parser.add_argument('--attention', default='general', help='Attention type')
     parser.add_argument('--tensorboard', action='store_true', default=False,
                         help='Enables tensorboard log')
+    parser.add_argument('--save_path', type=str, default='./saved/dailydialog_{}'.format(
+            dt.datetime.now().strftime("%m_%d_%H_%M")),
+            metavar='save_path', help='model save path')
+    parser.add_argument('--pretrained', type=str, default='', metavar='pretrained',
+                                    help='model pretrained')
     args = parser.parse_args()
 
     print(args)
@@ -158,6 +165,10 @@ if __name__ == '__main__':
                     context_attention=args.attention,
                     dropout_rec=args.rec_dropout,
                     dropout=args.dropout)
+
+    if args.pretrained != '':
+        state_dict = torch.load(args.pretrained)
+        model.load_state_dict(state_dict)
     if cuda:
         model.cuda()
     loss_weights = torch.FloatTensor([
@@ -190,11 +201,13 @@ if __name__ == '__main__':
                                                train_loader, e, optimizer, True)
         valid_loss, valid_acc, _,_,_,val_fscore,_= train_or_eval_model(model, loss_function, valid_loader, e)
         test_loss, test_acc, test_label, test_pred, test_mask, test_fscore, attentions = train_or_eval_model(model, loss_function, test_loader, e)
+        torch.save(model.state_dict(), os.path.join(save_path, 'checkpoint.pkl'))
 
         if best_loss == None or best_loss > test_loss:
             best_loss, best_label, best_pred, best_mask, best_attn =\
                     test_loss, test_label, test_pred, test_mask, attentions
-
+            torch.save(model.state_dict(), os.path.join(save_path, 'model_best.pkl'))
+            print('saved model best')
         if args.tensorboard:
             writer.add_scalar('test: accuracy/loss',test_acc/test_loss,e)
             writer.add_scalar('train: accuracy/loss',train_acc/train_loss,e)
